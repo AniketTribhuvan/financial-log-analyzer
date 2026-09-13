@@ -1,6 +1,6 @@
 # Financial Log Analyzer
 
-A memory-efficient financial transaction processing pipeline built with **Python, Polars, and Pydantic**.
+A memory-aware financial transaction processing pipeline built with **Python, Polars, and Pydantic**.
 
 The project processes large transaction logs in batches, validates and cleans the data, detects duplicate transactions, stores the results in Parquet, and performs statistical anomaly detection on transaction history.
 
@@ -21,6 +21,8 @@ Duplicate Detection
    ↓
 Valid / Invalid Parquet
    ↓
+Single Valid Parquet Dataset
+   ↓
 Lazy Polars Analysis
    ↓
 7-Day Rolling Statistics
@@ -33,7 +35,8 @@ Anomaly Detection (Three-Sigma Rule)
 - Processes CSV data in **50,000-row batches** instead of loading the complete dataset at once.
 - Uses **Pydantic** for schema validation and custom business rules.
 - Detects duplicate `transaction_id` values across batches.
-- Separates valid and invalid records into Parquet files.
+- Stores invalid records and validation errors in batch-wise Parquet files.
+- Consolidates all valid batches into a single `valid_transactions.parquet` file.
 - Uses **Polars LazyFrame** for downstream analytical processing.
 - Calculates 7-day rolling statistics separately for each `user_id + currency`.
 - Excludes the current transaction from its historical baseline.
@@ -44,11 +47,11 @@ Anomaly Detection (Three-Sigma Rule)
 
 ## Tech Stack
 
-**Python · Polars · Pydantic**
+**Python · Polars · Pydantic · psutil · pytest**
 
 Main concepts:
 
-`Batch Processing` · `Lazy Execution` · `Data Validation` · `Time-based Rolling Windows` · `Statistical Anomaly Detection`
+`Batch Processing` · `Lazy Execution` · `Data Validation` · `Time-based Rolling Windows` · `Statistical Anomaly Detection` · `Memory Monitoring`
 
 ---
 
@@ -85,7 +88,7 @@ The code is split into modules based on responsibility:
 - `validator.py` → Pydantic validation + duplicate detection
 - `cleaner.py` → output cleanup
 - `anomaly_detector.py` → Polars analytical pipeline
-- `main.py` → pipeline
+- `main.py` → pipeline orchestration
 
 ---
 
@@ -135,10 +138,22 @@ small batches
    ↓
 validation
    ↓
-Parquet
+batch Parquet files
+   ↓
+single valid Parquet file
    ↓
 lazy analytical queries
 ```
+
+Each batch is validated independently and written to Parquet. After processing, the valid batch files are consolidated into:
+
+```text
+output/valid_transactions.parquet
+```
+
+The individual valid batch files are then removed.
+
+The final valid Parquet file is read lazily by the anomaly detector, so the complete dataset does not need to be loaded into a Python DataFrame before analysis.
 
 This also separates the **data-cleaning stage** from the **analysis stage**, which makes the pipeline easier to extend.
 
@@ -151,6 +166,14 @@ The pipeline also monitors the Python process memory usage while processing the 
 It uses **psutil** to measure the process's RSS memory and tracks the highest observed value during processing.
 
 This helps evaluate how the pipeline behaves when processing a large dataset without loading the entire CSV into memory.
+
+In one benchmark using approximately **17.2 million records** from a roughly **1 GB CSV**, the pipeline reached about **4.7 GB peak process memory**.
+
+A major memory cost came from the Python/Pydantic validation layer and the `seen_transaction_ids` set used for duplicate detection.
+
+When duplicate-ID tracking was removed during testing, peak memory dropped from roughly **4.7 GB to 3.4 GB**, showing that batch processing alone does not guarantee low memory usage.
+
+The goal of this project is therefore **memory-aware processing** rather than claiming extremely low memory usage.
 
 The monitoring is intended for **benchmarking and learning**, not production-grade performance monitoring.
 
@@ -180,8 +203,10 @@ This project helped me understand:
 - How to handle validation errors without stopping the entire pipeline.
 - Why duplicate detection requires state across batches.
 - Why Parquet is useful for analytical workloads.
+- How batch Parquet files can be consolidated into a single analytical dataset.
 - How time-based rolling windows work.
 - How to build a simple statistical anomaly detector.
+- How to monitor process memory during large-data processing.
 - How to break a data pipeline into maintainable Python modules.
 
 ---
@@ -196,17 +221,17 @@ Current limitations include:
 - The anomaly detector uses a simple statistical baseline rather than a machine-learning model.
 - Currency values are analyzed separately rather than converted using historical FX rates.
 - The current pipeline is designed for batch processing rather than a true event-streaming system.
+- Pydantic validation creates Python objects, which can increase memory usage for large batches.
 
 ---
 
 ## Future Improvements
 
-- Benchmark memory usage and processing time on a **1 GB+ dataset**.
-- Improve large-scale duplicate detection.
-- Add automated tests.
+- Improve large-scale duplicate detection to reduce persistent memory usage.
 - Add structured logging and configuration.
 - Compare `mean + 3σ` with robust methods such as **Median + MAD**.
 - Experiment with ML-based anomaly detection.
+- Explore more scalable processing and storage strategies for larger datasets.
 
 ---
 
@@ -296,10 +321,12 @@ The pipeline will:
 1. Read the CSV in batches.
 2. Validate each transaction.
 3. Detect duplicate transaction IDs.
-4. Write valid and invalid records to Parquet.
-5. Run lazy statistical anomaly detection.
-6. Write detected anomalies to `anomalies.parquet`.
-7. Display processing and memory statistics.
+4. Write valid and invalid records to batch Parquet files.
+5. Consolidate the valid records into `valid_transactions.parquet`.
+6. Remove the individual valid batch files.
+7. Run lazy statistical anomaly detection.
+8. Write detected anomalies to `anomalies.parquet`.
+9. Display processing and memory statistics.
 
 ---
 
@@ -307,7 +334,7 @@ The pipeline will:
 
 **Working prototype — actively improving**
 
-The main pipeline is complete. Future work will focus on benchmarking, testing, scalability, and comparing different anomaly-detection methods.
+The main pipeline is complete. Future work will focus on scalability, better duplicate detection, and comparing different anomaly-detection methods.
 
 ---
 

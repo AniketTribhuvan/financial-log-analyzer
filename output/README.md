@@ -9,14 +9,9 @@ The output is recreated each time the pipeline runs.
 ```text
 output/
 
-valid_batches/
- batch1_valid.parquet
- batch2_valid.parquet
- ...
+valid_transactions.parquet
 
-invalid_batches/
- batch1_invalid.parquet
- batch2_invalid.parquet
- ...
- anomalies.parquet
+invalid_transactions.parquet
+ 
+anomalies.parquet
 ```
